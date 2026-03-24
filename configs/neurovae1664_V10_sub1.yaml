@@ -1,0 +1,61 @@
+model:
+  # base_learning_rate: 3e-4
+  # target: brainvae.BrainAutoencoderKL
+  params:
+    # monitor: "val/rec_loss"
+    # embed_dim: 256
+    # lossconfig:
+    #   # target: ldm.modules.losses.LPIPSWithDiscriminator
+    #   # params:
+    #   # disc_start: 50001
+    #   kl_weight: 0.0001
+    #   disc_weight: 0.5
+    #   perceptual_weight: 0
+
+    ddconfig:
+      # double_z: False
+      z_channels: 256
+      resolution: 256
+      in_channels: 1
+      out_ch: 1
+      ch: 64
+      ch_mult: [1,2,4]
+      num_res_blocks: 2
+      num_down_blocks: 2
+      num_up_blocks: 2
+      attn_resolutions: [ ]
+      dropout: 0.0
+      linear_dim: 1024
+      latent_dim: 6656
+      # voxel_dim: 15724
+      #[15724, 14278, 13039, 12682]
+      # output_tokens: True
+
+# data:
+#   target: main.DataModuleFromConfig
+#   params:
+#     batch_size: 12
+#     wrap: True
+#     train:
+#       target: ldm.data.imagenet.ImageNetSRTrain
+#       params:
+#         size: 256
+#         degradation: pil_nearest
+#     validation:
+#       target: ldm.data.imagenet.ImageNetSRValidation
+#       params:
+#         size: 256
+#         degradation: pil_nearest
+
+# lightning:
+#   callbacks:
+#     image_logger:
+#       target: main.ImageLogger
+#       params:
+#         batch_frequency: 1000
+#         max_images: 8
+#         increase_log_steps: True
+
+  # trainer:
+  #   benchmark: True
+  #   accumulate_grad_batches: 2
