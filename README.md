@@ -5,12 +5,14 @@
 <!-- ## NeuroFlow: Toward Unified Visual Encoding and Decoding from Neural Activity  -->
 
 <h1 align="center">
-  NeuroFlow 🧠 <br>
-  Toward Unified Visual Encoding and Decoding from Neural Activity <br>
-</h1>
+  CVPR 2026 | NeuroFlow 🧠✨
 
 <h1 align="center">
-  CVPR 2026 ✨
+  <!-- NeuroFlow 🧠 <br> -->
+  Toward Unified Visual Encoding and Decoding from Neural Activity <br>
+
+
+
 
 <br><img src='Neuroflow.png' align="center"><br>
 
