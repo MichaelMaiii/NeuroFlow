@@ -1,13 +1,16 @@
-# CVPR 2026 | NeuroFlow 🧠✨🤖
+<!-- # CVPR 2026 | NeuroFlow 🧠✨🤖 -->
 <!-- Official repository for the paper **SynBrain: Enhancing Visual-to-fMRI Synthesis via Probabilistic Representation Learning**.
 [arXiv](https://arxiv.org/pdf/2508.10298) -->
 
 <!-- ## NeuroFlow: Toward Unified Visual Encoding and Decoding from Neural Activity  -->
 
 <h1 align="center">
-  NeuroFlow <br>
-  Toward Unified Visual Encoding and Decoding from Neural Activity
+  NeuroFlow 🧠 <br>
+  Toward Unified Visual Encoding and Decoding from Neural Activity <br>
 </h1>
+
+<h1 align="center">
+  CVPR 2026 ✨
 
 <br><img src='Neuroflow.png' align="center"><br>
 
@@ -31,7 +34,7 @@ ps. You need to set your own path to run the code.
 
 #### Option 2
 
-Download data from [HuggingFace NeuroFlow](https://huggingface.co/datasets/pscotti/naturalscenesdataset/tree/main);
+Download data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main);
 
 
 
