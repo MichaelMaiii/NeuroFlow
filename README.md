@@ -10,3 +10,69 @@
 </h1>
 
 <br><img src='Neuroflow.png' align="center"><br>
+
+### Requirements
+* Create conda environment using environment.yaml in the main directory by entering `conda env create -f requirements.yml` . It is an extensive environment and may include redundant libraries. You may also create environment by checking requirements yourself. 
+
+### Data Acquisition and Processing
+
+ps. You need to set your own path to run the code.
+
+#### Option 1
+
+1. Download NSD data from NSD AWS Server;
+2. Download "COCO_73k_annots_curated.npy" file from [HuggingFace NSD](https://huggingface.co/datasets/pscotti/naturalscenesdataset/tree/main);
+3. Prepare visual stimuli and fMRI data;
+    ```
+    python data/download_nsddata.py
+    python data/prepare_nsddata_zscore.py -sub x
+    ```
+4. Extract CLIP image embedding by running `extract_features_sdxl_unclip.ipynb`
+
+#### Option 2
+
+Download data from [HuggingFace NeuroFlow](https://huggingface.co/datasets/pscotti/naturalscenesdataset/tree/main);
+
+
+
+### Stage1-BrainVAE: 
+  ```
+  bash script/vae/run_neurovae.sh
+  ```
+
+<!-- Run `srcipt/vae/train_neurovae.py` for BrainVAE training -->
+
+<!-- ps. Change sys.path/save_path/data_path to run the code correctly. -->
+
+
+### Stage2-XFM:
+  ```
+  bash script/xfm/run_xfm.sh
+  ```
+
+<!-- Run `src/s2n/run_sit_os.sh` for subject-specific S2N mapper training.
+
+Run `src/s2n/run_sit_os_ft.sh` for subject-adaptive S2N mapper training. -->
+
+### Inference (Visual Encoding & Decoding):
+  ```
+  python script/generate_blurry.py
+  python script/generate.py
+  ```
+
+
+### Evaluation:
+  ```
+  python script/eval.py
+  ```
+
+
+### Citation
+<!-- ```
+@article{mai2025synbrain,
+  title={SynBrain: Enhancing Visual-to-fMRI Synthesis via Probabilistic Representation Learning},
+  author={Mai, Weijian and Wu, Jiamin and Zhu, Yu and Yao, Zhouheng and Zhou, Dongzhan and Luo, Andrew F and Zheng, Qihao and Ouyang, Wanli and Song, Chunfeng},
+  journal={arXiv preprint arXiv:2508.10298},
+  year={2025}
+}
+``` -->

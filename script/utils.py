@@ -24,22 +24,14 @@ import pandas as pd
 import seaborn as sns
 
 def evaluate_fmri_reconstruction(all_x_fmri, all_recon_fmri):
-    """
-    评估fMRI数据重建质量，计算MSE、体素级Spearman相关系数、解释方差，并生成统计信息和直方图
-    
-    参数:
-        all_x_fmri: 原始fMRI数据tensor，形状为[b, 1, 15724]
-        all_recon_fmri: 重建fMRI数据tensor，形状为[b, 1, 15724]
-    """
-    # 确保输入是numpy数组（如果是PyTorch张量则转换）
+
     if isinstance(all_x_fmri, torch.Tensor):
         all_x_fmri = all_x_fmri.detach().cpu().numpy()
     if isinstance(all_recon_fmri, torch.Tensor):
         all_recon_fmri = all_recon_fmri.detach().cpu().numpy()
     
-    # 调整形状：移除 singleton 维度，变为 [batch_size, num_voxels]
-    all_x_fmri = np.squeeze(all_x_fmri)  # 形状变为 [b, 15724]
-    all_recon_fmri = np.squeeze(all_recon_fmri)  # 形状变为 [b, 15724]
+    all_x_fmri = np.squeeze(all_x_fmri)
+    all_recon_fmri = np.squeeze(all_recon_fmri)  
     
     # 计算总体MSE
     mse = np.mean((all_x_fmri - all_recon_fmri) **2)
@@ -144,13 +136,6 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
-def requires_grad(model, flag=True):
-    """
-    Set requires_grad flag for all parameters in a model.
-    """
-    for p in model.parameters():
-        p.requires_grad = flag
-
 def neuroflow_generate(brain_enc, model, fmri, args, prediction='v'):
     z_fmri = brain_enc.encode(fmri)
     if args.encoder == 'vae':
@@ -168,6 +153,80 @@ def neuroflow_generate(brain_enc, model, fmri, args, prediction='v'):
 def load_config(config_file):
     with open(config_file, "r") as file:
         return yaml.safe_load(file)
+
+
+# -----------------------------
+# NeuroVAE utilities (shared)
+# -----------------------------
+
+# voxel_dim depends on NSD subject (ROI mask size).
+NEUROVAE_VOXEL_DIM_BY_SUBJECT = {
+    1: 15724,
+    2: 14278,
+    5: 13039,
+    7: 12682,
+}
+
+
+def resolve_neurovae_voxel_dim(subject: int, default_voxel_dim: int):
+    """Resolve NSD subject -> voxel_dim (fallback to provided default)."""
+    return NEUROVAE_VOXEL_DIM_BY_SUBJECT.get(int(subject), default_voxel_dim)
+
+
+def get_neurovae_config_path(hidden_dim=None) -> str:
+    """
+    Return the NeuroVAE config path.
+
+    The repo now uses `configs/neurovae.yaml` (subject-agnostic), but we keep a fallback
+    to the old naming scheme if needed.
+    """
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    new_path = os.path.join(project_root, "configs", "neurovae.yaml")
+    if os.path.exists(new_path):
+        return new_path
+
+    # Backward compatibility: old naming scheme.
+    if hidden_dim is None:
+        hidden_dim = 1664
+    old_path = os.path.join(project_root, "configs", f"neurovae{hidden_dim}_V10.yaml")
+    if os.path.exists(old_path):
+        return old_path
+
+    raise FileNotFoundError(
+        f"Cannot find NeuroVAE config. Tried `{new_path}` and `{old_path}`."
+    )
+
+
+def get_neurovae_ddconfig(subject: int, hidden_dim=None) -> dict:
+    """
+    Load NeuroVAE ddconfig and override `voxel_dim` based on subject.
+    """
+    import copy
+
+    config_path = get_neurovae_config_path(hidden_dim)
+    config = load_config(config_path)
+    ddconfig = copy.deepcopy(config["model"]["params"]["ddconfig"])
+
+    ddconfig["voxel_dim"] = resolve_neurovae_voxel_dim(
+        subject, int(ddconfig.get("voxel_dim"))
+    )
+    return ddconfig
+
+
+def load_neurovae_v10_proj(args, checkpoint_root: str, checkpoint_name: str = "last.pth"):
+    """
+    Load `NeuroVAE_P` from `${checkpoint_root}/${args.vae_path}/${checkpoint_name}`.
+    """
+    # Lazy import to keep utils import lightweight.
+    from neurovae import NeuroVAE_P
+
+    ddconfig = get_neurovae_ddconfig(args.subject, getattr(args, "hidden_dim", None))
+    model = NeuroVAE_P(ddconfig=ddconfig)
+
+    model_path = os.path.join(checkpoint_root, args.vae_path, checkpoint_name)
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(checkpoint["model"])
+    return model
     
 def count_params(model):
     total = sum(p.numel() for p in model.parameters())
@@ -592,43 +651,6 @@ def sdxl_recon_combined(diffusion_engine, vector_suffix, sample_clip, train_clip
     plt.tight_layout()
     return fig
 
-def vavae_recon_combined(model, sample_clip, train_clip, num_samples=5):
-    
-    # b, d, c = sample_clip.shape
-    # assert d == 256
-    # sample_clip = sample_clip.reshape(b, d//16, d//16, c).permute(0, 3, 1, 2)
-    # train_clip = train_clip.reshape(b, d//16, d//16, c).permute(0, 3, 1, 2)
-    
-    recon = model.decode(sample_clip)
-    recon = torch.clamp(127.5 * recon + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-    raw = model.decode(train_clip)
-    raw = torch.clamp(127.5 * raw + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-    
-    fig, axes = plt.subplots(2, num_samples, figsize=(num_samples * 3, 6))  # 两行多列
-
-    for i in range(num_samples):
-        # 原图（GT）
-        axes[0, i].imshow(raw[i])
-        axes[0, i].axis('off')
-        axes[0, i].set_title(f'Raw {i+1}', fontsize=10)
-
-        # 重建图（Recon）
-        axes[1, i].imshow(recon[i])
-        axes[1, i].axis('off')
-        axes[1, i].set_title(f'Recon {i+1}', fontsize=10)
-
-    # 设置整张图标题
-    plt.suptitle("Top: Raw Images | Bottom: Reconstructed Images", fontsize=14)
-    plt.tight_layout()
-    
-    # 将图像直接转换为 PIL Image 对象
-    buf = BytesIO()  # 创建一个内存缓冲区
-    plt.savefig(buf, format='png')  # 将图像保存到缓冲区而非文件
-    plt.close()
-    buf.seek(0)  # 重置缓冲区游标位置
-    pil_image = Image.open(buf)  # 从缓冲区创建 PIL Image 对象
-    
-    return pil_image
 
 def get_weight(model):
     size_all_mb = sum(p.numel() for p in model.parameters()) / 1024**2
@@ -636,58 +658,9 @@ def get_weight(model):
 
     
 def save_fmri_recon_image(fmri_data, recon_data):
-    """
-    将原始 fMRI 数据和重建的 fMRI 数据绘制到一张图的左右两侧并记录到 wandb。
-    假设 fMRI 数据和重建数据形状为 [batch, 1, length]。
-    """
-    # 去掉维度为 1 的通道，变为 [batch, length]
-    # fmri_data = fmri_data[0].detach().cpu().numpy()
-    # recon_data = recon_data[0].detach().cpu().numpy()
+
     fmri_data = fmri_data[:5].squeeze(1).detach().cpu().numpy()
     recon_data = recon_data[:5].squeeze(1).detach().cpu().numpy()
-
-    # 创建一个包含两个子图的图像 (1x2布局)
-    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
-    
-    # 生成不同的颜色，每个样本用不同的颜色绘制
-    colors = plt.cm.viridis(np.linspace(0, 1, fmri_data.shape[0]))
-    
-    # 绘制左侧：原始 fMRI 数据曲线
-    for i in range(fmri_data.shape[0]):
-        axes[0].plot(fmri_data[i], color=colors[i], label=f'Sample {i}')
-    axes[0].set_title(f"Original fMRI data ({fmri_data.shape[0]} samples)")
-    axes[0].set_xlabel("Voxel Index")
-    axes[0].set_ylabel("Signal Intensity")
-
-    # 绘制右侧：重建的 fMRI 数据曲线
-    for i in range(recon_data.shape[0]):
-        axes[1].plot(recon_data[i], color=colors[i], label=f'Sample {i}')
-        
-    # mse_ = F.mse_loss(recon_data, fmri_data)
-
-    axes[1].set_title(f"Reconstructed fMRI data ({recon_data.shape[0]} samples)")
-    axes[1].set_xlabel("Voxel Index")
-    axes[1].set_ylabel("Signal Intensity")
-
-    # 将图像直接转换为 PIL Image 对象
-    buf = BytesIO()  # 创建一个内存缓冲区
-    plt.savefig(buf, format='png')  # 将图像保存到缓冲区而非文件
-    plt.close()
-    buf.seek(0)  # 重置缓冲区游标位置
-    pil_image = Image.open(buf)  # 从缓冲区创建 PIL Image 对象
-    
-    return pil_image
-
-def save_eeg_recon_image(fmri_data, recon_data):
-    """
-    将原始 fMRI 数据和重建的 fMRI 数据绘制到一张图的左右两侧并记录到 wandb。
-    假设 fMRI 数据和重建数据形状为 [batch, 1, length]。
-    """
-    # 去掉维度为 1 的通道，变为 [batch, length]
-    # fmri_data = fmri_data[0].detach().cpu().numpy()
-    # recon_data = recon_data[0].detach().cpu().numpy()
-    fmri_data = fmri_data[0].detach().cpu().numpy()
-    recon_data = recon_data[0].detach().cpu().numpy()
 
     # 创建一个包含两个子图的图像 (1x2布局)
     fig, axes = plt.subplots(1, 2, figsize=(18, 6))

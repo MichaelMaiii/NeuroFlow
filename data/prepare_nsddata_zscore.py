@@ -72,10 +72,12 @@ stim_order = loadmat(stim_order_f)
 sig_train = {}
 sig_test = {}
 num_trials = session*750
+is_train_trial = np.zeros((num_trials,), dtype=bool)
 for idx in range(num_trials):
     ''' nsdId as in design csv files'''
     nsdId = stim_order['subjectim'][sub-1, stim_order['masterordering'][idx] - 1] - 1
     if stim_order['masterordering'][idx]>1000:
+        is_train_trial[idx] = True
         if nsdId not in sig_train:
             sig_train[nsdId] = []
         sig_train[nsdId].append(idx)
@@ -102,7 +104,6 @@ def zscore_within_session(betas):
     print('z-scoring beta weights within this session...')
     mb = np.mean(betas, axis=0, keepdims=True)
     sb = np.std(betas, axis=0, keepdims=True)
-    # betas = np.nan_to_num((betas - mb) / (sb + 1e-6))
     betas = np.nan_to_num((betas - mb) / np.clip(sb, 1e-8, 10000))
     print(np.min(betas), np.max(betas), np.mean(betas), np.std(betas))
     print ("mean = %.3f, sigma = %.3f" % (np.mean(mb), np.mean(sb)))
@@ -110,16 +111,45 @@ def zscore_within_session(betas):
     return betas
 
 fmri = np.zeros((num_trials, num_voxel)).astype(np.float32)
+
+# Track global (train-only) mean/std on scaled betas (betas / 300) for this subject.
+train_sum = np.zeros((num_voxel,), dtype=np.float64)
+train_sumsq = np.zeros((num_voxel,), dtype=np.float64)
+train_count = 0
+
 for i in range(session):
     beta_filename = "betas_session{0:02d}.nii.gz".format(i+1)
     beta_f = nib.load(betas_dir+beta_filename).get_fdata().astype(np.float32)
     betas = beta_f[mask>0].transpose()
+
+    # Accumulate global train statistics BEFORE within-session z-scoring.
+    # betas_scaled shape: [750, vox]
+    betas_scaled = betas / 300.0
+    sl = slice(i * 750, (i + 1) * 750)
+    betas_train = betas_scaled[is_train_trial[sl]]
+    if betas_train.size > 0:
+        train_sum += betas_train.sum(axis=0, dtype=np.float64)
+        train_sumsq += np.square(betas_train, dtype=np.float64).sum(axis=0, dtype=np.float64)
+        train_count += betas_train.shape[0]
+
     fmri[i*750:(i+1)*750] = zscore_within_session(betas)
     del beta_f
     del betas
     print(i)
     
 print("fMRI Data are loaded: ", fmri.shape)
+
+# Save per-subject train global mean/std for (betas / 300) space.
+if train_count == 0:
+    raise RuntimeError("No train trials found while computing global stats.")
+train_mean = (train_sum / train_count).astype(np.float32)  # [vox]
+train_var = (train_sumsq / train_count) - np.square(train_mean.astype(np.float64))
+train_std = np.sqrt(np.clip(train_var, 1e-12, None)).astype(np.float32)  # [vox]
+
+os.makedirs(f"nsd/subj{sub:02d}", exist_ok=True)
+np.save(f"nsd/subj{sub:02d}/nsd_train_global_mean_scaled_sub{sub}.npy", train_mean)
+np.save(f"nsd/subj{sub:02d}/nsd_train_global_std_scaled_sub{sub}.npy", train_std)
+print(f"Saved train global mean/std (scaled betas) for sub{sub}: count={train_count}")
 
 f_stim = h5py.File('nsd_stimuli.hdf5', 'r')
 stim = f_stim['imgBrick'][:]
@@ -133,7 +163,6 @@ stim_array = np.zeros((num_train,im_dim,im_dim,im_c))
 for i,idx in enumerate(train_im_idx):
     stim_array[i] = stim[idx]
     fmri_array[i] = fmri[sorted(sig_train[idx])]  #[3, voxels]
-    # fmri_array[i] = fmri[sorted(sig_train[idx])].mean(0)
     print(i)
 
 np.save('nsd/subj{:02d}/nsd_train_fmri_zscore_sub{}.npy'.format(sub,sub),fmri_array)
@@ -146,7 +175,6 @@ stim_array = np.zeros((num_test,im_dim,im_dim,im_c))
 for i,idx in enumerate(test_im_idx):
     stim_array[i] = stim[idx]
     fmri_array[i] = fmri[sorted(sig_test[idx])]
-    # fmri_array[i] = fmri[sorted(sig_test[idx])].mean(0)
     print(i)
 
 np.save('nsd/subj{:02d}/nsd_test_fmri_zscore_sub{}.npy'.format(sub,sub),fmri_array)

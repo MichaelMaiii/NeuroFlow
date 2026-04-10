@@ -31,16 +31,12 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
 from sit import SiT
-from loss import SILoss_Reverse
+from loss import SiTLoss
 
-from diffusers.models import AutoencoderKL
-# import wandb_utils
 import wandb
 import math
 from torchvision.utils import make_grid
-from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from torchvision.transforms import Normalize
-import torch.distributed as dist
 from dataset import *
 from mind_utils import *
 from utils import *
@@ -54,17 +50,9 @@ signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 logger = get_logger(__name__)
 
-CLIP_DEFAULT_MEAN = (0.48145466, 0.4578275, 0.40821073)
-CLIP_DEFAULT_STD = (0.26862954, 0.26130258, 0.27577711)
-
 from torchdiffeq import odeint_adjoint as odeint
 import matplotlib.pyplot as plt
 
-def compute_clip_stats(clip_embedding):
-    # clip_embedding: [b, 256, 1664]
-    mu = clip_embedding.mean(dim=(0, 1), keepdim=True)     # shape [1, 1, 1664]
-    std = clip_embedding.std(dim=(0, 1), keepdim=True)     # shape [1, 1, 1664]
-    return mu, std
 
 def compute_retrieval(x_fmri, target, device):
     clip_voxels_norm = nn.functional.normalize(x_fmri.flatten(1), dim=-1)
@@ -103,13 +91,6 @@ def plot_umap(clip_target, aligned_clip_voxels):
     return fig
 
 
-def array2grid(x):
-    nrow = round(math.sqrt(x.size(0)))
-    x = make_grid(x.clamp(0, 1), nrow=nrow, value_range=(0, 1))
-    x = x.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-    return x 
-
-
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
     """
@@ -120,7 +101,6 @@ def update_ema(ema_model, model, decay=0.9999):
 
     for name, param in model_params.items():
         name = name.replace("module.", "")
-        # TODO: Consider applying only to params that require_grad to avoid small numerical changes of pos_embed
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
 
 
@@ -145,29 +125,6 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
-
-def load_brain_vae(args):
-    
-    config = load_config(f"/home/maiweijian/project/NeuroFlow/configs/neurovae{args.hidden_dim}_V10_sub{args.subject}.yaml")
-    model_config = config["model"]["params"]
-    ddconfig = model_config["ddconfig"]
-    
-    model = NeuroVAE_V10_Proj(ddconfig=ddconfig)
-    
-    model_path = f'/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow/train_logs/{args.vae_path}/last.pth'
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-    model.load_state_dict(checkpoint['model'])
-    # model_state_dict = {
-    #     k.replace('module.', ''): v 
-    #     for k, v in checkpoint['model'].items() 
-    #     if 'module' in k
-    # }
-    # model.load_state_dict(model_state_dict)
-    checkpoint_epoch = checkpoint['epoch']
-    print(f'Load BrainVAE Checkpoint from {checkpoint_epoch} epoch.....')
-    del checkpoint
-    
-    return model
 
 #################################################################################
 #                                  Training Loop                                #
@@ -234,12 +191,12 @@ def main(args):
     count_params(diffusion_engine)
     
     #! Load Brain Autoencoder
-    brain_enc = load_brain_vae(args).to(device).eval()
+    brain_enc = load_neurovae_v10_proj(args, checkpoint_root=args.output_dir).to(device).eval()
     requires_grad(brain_enc, False)
     print("params of brain encoder:")
     count_params(brain_enc)
         
-    loss_fn = SILoss_Reverse(
+    loss_fn = SiTLoss(
         prediction=args.prediction,
         path_type=args.path_type,
         weighting=args.weighting,
@@ -266,51 +223,6 @@ def main(args):
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
-    if args.finetune:
-        assert args.fm_path is not None
-        ckpt_name = 'last.pt'
-        ckpt = torch.load(
-            f'{os.path.join(args.output_dir, args.fm_path)}/{ckpt_name}',
-            map_location='cpu', weights_only=False
-            )
-        model.load_state_dict(ckpt['model'])
-        ema.load_state_dict(ckpt['ema'])
-        finetune_step = ckpt['steps']
-        print(f'Finetune from {finetune_step} steps......')
-        
-        print("Trainable parameters: ")
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print(name)
-        
-        # #! freeze layers
-        if args.ft_mode == 'mlp':
-            print("-------------------------------------")
-            requires_grad(model, False)
-            # 设定要释放的block层数
-            num_unfreeze = 8
-            for name, param in model.named_parameters():
-                for i in range(num_unfreeze):
-                    # if name.startswith(f'blocks.{i}.adaLN'):
-                    if name.startswith(f'blocks.{i}.mlp'):
-                        param.requires_grad = True
-                        
-        elif args.ft_mode == 'attn':
-            print("-------------------------------------")
-            requires_grad(model, False)
-            # 设定要释放的block层数
-            num_unfreeze = 8
-            for name, param in model.named_parameters():
-                for i in range(num_unfreeze):
-                    # if name.startswith(f'blocks.{i}.adaLN'):
-                    if name.startswith(f'blocks.{i}.attn'):
-                        param.requires_grad = True
-                
-        print("Trainable parameters: ")
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print(name)
-    # resume:
     global_step = 0
     if args.resume:
         ckpt_name = 'last.pt'
@@ -329,10 +241,10 @@ def main(args):
         model, optimizer, train_dataloader, test_dataloader
     )
 
-    # Unwrap the model
-    if hasattr(model, 'module'):
-        model = accelerator.unwrap_model(model)
-        print('Unwrap the model for multiple process......')
+    # # Unwrap the model
+    # if hasattr(model, 'module'):
+    #     model = accelerator.unwrap_model(model)
+    #     print('Unwrap the model for multiple process......')
 
     if args.wandb_log:
         if accelerator.is_main_process:
@@ -376,7 +288,7 @@ def main(args):
     print(f"Sample batch size: {sample_batch_size}")
 
     # process ground-truth CLIP features
-    train_fmri, train_clip, _ = next(iter(train_dataloader))
+    train_fmri, train_clip = next(iter(train_dataloader))
     train_fmri = train_fmri.float().unsqueeze(1).to(device)
     print("Train fMRI shape: ", train_fmri.shape)
     train_length = train_fmri.shape[-1] 
@@ -386,7 +298,7 @@ def main(args):
     compute_retrieval(train_x.clone(), train_clip.clone(), device)
     compute_retrieval(train_x_clip.clone(), train_clip.clone(), device)
     
-    test_fmri, test_clip, _ = next(iter(test_dataloader))
+    test_fmri, test_clip = next(iter(test_dataloader))
     test_fmri = test_fmri[:sample_batch_size]
     test_clip = test_clip[:sample_batch_size]
     test_fmri = test_fmri.float().unsqueeze(1).to(device)
@@ -400,7 +312,7 @@ def main(args):
 
     for epoch in range(args.epochs):
         model.train()
-        for x_fmri, z_clip, _ in train_dataloader: 
+        for x_fmri, z_clip in train_dataloader: 
             model.train()
             x_fmri = x_fmri.float().unsqueeze(1).to(device)
             z_clip = z_clip.float().to(device)
@@ -442,10 +354,10 @@ def main(args):
             if (global_step == 1 or (global_step % args.sampling_steps == 0 and global_step > 0)):
                 model.eval()
                 ema.eval()
-                from samplers import euler_sampler_cycle_reverse, euler_sampler_bwd_reverse
+                from samplers import euler_sampler_cycle, euler_sampler_bwd
                 with torch.no_grad():
                     print('Using euler cycle sampling..................')
-                    sample_clip, sample_x = euler_sampler_cycle_reverse(
+                    sample_clip, sample_x = euler_sampler_cycle(
                             ema,
                             train_x,
                             train_clip,
@@ -470,7 +382,7 @@ def main(args):
                     print(torch.mean(train_fmri_recon), torch.std(train_fmri_recon))
                     
                     train_f2i, _ = brain_enc.encode(train_fmri_recon)
-                    sample_f2i = euler_sampler_bwd_reverse(ema, train_f2i, num_steps=args.num_steps, heun=args.heun)
+                    sample_f2i = euler_sampler_bwd(ema, train_f2i, num_steps=args.num_steps, heun=args.heun)
                     
                     # SDXL decode
                     train_wandb_img = sdxl_recon_combined_all(diffusion_engine, vector_suffix, sample_clip, train_clip, sample_f2i, args)
@@ -478,7 +390,7 @@ def main(args):
                     logging.info("Generating EMA samples done.")
                     
                     #!!!! Test sampling.......
-                    test_sample_clip, test_sample_x = euler_sampler_cycle_reverse(
+                    test_sample_clip, test_sample_x = euler_sampler_cycle(
                             ema,
                             test_x,
                             test_clip,
@@ -503,7 +415,7 @@ def main(args):
                     print(torch.mean(test_fmri_recon), torch.std(test_fmri_recon))
                     
                     test_f2i, _ = brain_enc.encode(test_fmri_recon)
-                    test_sample_f2i = euler_sampler_bwd_reverse(ema, test_f2i, num_steps=20, heun=args.heun)
+                    test_sample_f2i = euler_sampler_bwd(ema, test_f2i, num_steps=20, heun=args.heun)
                     
                     # SDXL decode
                     test_wandb_img = sdxl_recon_combined_all(diffusion_engine, vector_suffix, test_sample_clip, test_clip, test_sample_f2i, args)

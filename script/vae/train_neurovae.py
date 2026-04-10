@@ -25,39 +25,27 @@ from dataset import *
 from mind_utils import *
 from neurovae import *
 
-def requires_grad(model, flag=True):
-    """
-    Set requires_grad flag for all parameters in a model.
-    """
-    for p in model.parameters():
-        p.requires_grad = flag
 
 def log_recon_images(sample_image_ema, sample_image_test, epoch):
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 
-    # EMA 图像
     axes[0].imshow(vutils.make_grid(sample_image_ema, normalize=True, value_range=(-1, 1)).permute(1, 2, 0).cpu().numpy())
     axes[0].set_title('Recon Image')
     axes[0].axis('off')
 
-    # 测试图像
     axes[1].imshow(vutils.make_grid(sample_image_test, normalize=True, value_range=(-1, 1)).permute(1, 2, 0).cpu().numpy())
     axes[1].set_title('Test Image')
     axes[1].axis('off')
 
-    # 将合并后的图像上传到 WandB
     plt.tight_layout()
-    # plt.close(fig)
-    
     return wandb.Image(fig, caption=f"Epoch {epoch}")
 
 def main(args):
     seed_everything(args.seed)
-    
-    config = load_config(f"/home/maiweijian/project/NeuroFlow/configs/neurovae{args.hidden_dim}_V10.yaml")
-    lr = args.base_lr
-    model_config = config["model"]["params"]
-    ddconfig = model_config["ddconfig"]
+
+    # Make the base config work for all supported subjects by overriding voxel_dim.
+    ddconfig = get_neurovae_ddconfig(args.subject, args.hidden_dim)
+    args.voxel_dim = ddconfig["voxel_dim"]
     chconfig = ddconfig["ch_mult"]
     print(f"Using Layers: {chconfig}")
     
@@ -66,7 +54,7 @@ def main(args):
     if not os.path.exists(outdir):
         os.makedirs(outdir, exist_ok=True)
         
-    model = NeuroVAE_V10_Proj(ddconfig=ddconfig,
+    model = NeuroVAE_P(ddconfig=ddconfig,
                 clip_weight=args.clip_weight,
                 kl_weight=args.kl_weight,
                 cycle_weight=args.cycle_weight,
@@ -74,21 +62,9 @@ def main(args):
                 linear_dim=args.linear_dim, #1024
                 embed_dim=args.embed_dim #1280
                 )
-    print("params of NeuroVAE_Proj: ")
+    print("params of NeuroVAE_P: ")
     count_params(model)
-    
-    # model = NeuroVAE_V10(ddconfig=ddconfig,
-    #         clip_weight=args.clip_weight,
-    #         kl_weight=args.kl_weight,
-    #         cycle_weight=args.cycle_weight,
-    #         hidden_dim=args.hidden_dim, #1664
-    #         linear_dim=args.linear_dim, #1024
-    #         embed_dim=args.embed_dim #1280
-    #         )
-    # print("params of NeuroVAE: ")
-    # count_params(model)
         
-    # args.local_batch_size = args.batch_size
     train_dataloader = train_nsd_dataloader(args)
     val_dataloader = val_nsd_dataloader(args)
    
@@ -119,27 +95,6 @@ def main(args):
         print("=> Finetune from checkpoint (iterations {})".format(checkpoint["epoch"]))
         del checkpoint
         
-        #! change subject-specific linear
-        del model.module.encoder.subj_proj
-        del model.module.decoder.subj_proj
-        requires_grad(model, False)
-        
-        print("Trainable parameters: ")
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print(name)
-        
-        model.module.encoder.subj_proj = MLP(args.voxel_dim, args.linear_dim, 1664*4)
-        model.module.decoder.subj_proj = MLP(1664*4, args.linear_dim, args.voxel_dim)
-        # model.module.encoder.subj_proj = nn.Linear(args.voxel_dim, 1664*4)
-        # model.module.decoder.subj_proj = nn.Linear(1664*4, args.voxel_dim)
-        model.to(device)
-        
-        print("Trainable parameters: ")
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print(name)
-        
     init_step = 0
     if args.resume and os.path.exists(os.path.join(outdir, 'last.pth')):
         checkpoint_file = os.path.join(outdir, 'last.pth')
@@ -164,26 +119,25 @@ def main(args):
         print(f"Training epoch {epoch}.....................")
         sims_base = 0.
         val_sims_base = 0.
-        fwd_percent_correct = 0.
-        bwd_percent_correct = 0.
-        val_fwd_percent_correct = 0.
-        val_bwd_percent_correct = 0.
-        fwd_percent_correct_recon = 0.
-        bwd_percent_correct_recon = 0.
-        val_fwd_percent_correct_recon = 0.
-        val_bwd_percent_correct_recon = 0.
+        racc = 0.
+        racc_clip = 0.
+        val_racc = 0.
+        val_racc_clip = 0.
+        racc_recon = 0.
+        racc_clip_recon = 0.
+        val_racc_recon = 0.
+        val_racc_clip_recon = 0.
         
         torch.cuda.empty_cache()
         
         model.train()
-        for train_i, (fmri, z, z_pool) in enumerate(train_dataloader):
+        for train_i, (fmri, z) in enumerate(train_dataloader):
             optimizer.zero_grad()
 
             fmri = fmri.unsqueeze(1).float().to(device)
             z = z.float().to(device)
             
             zs, zs_clip, zs_recon, zs_clip_recon, recon, rec_loss, kl_loss, clip_loss, cycle_loss, loss = model(fmri, z, sample_posterior=True)
-            # zs, recon, rec_loss, kl_loss, clip_loss, cycle_loss, loss = model(fmri, z, sample_posterior=True)
             
             loss = loss.mean()
             check_loss(loss)
@@ -204,31 +158,30 @@ def main(args):
             zs_recon_norm = nn.functional.normalize(zs_recon.flatten(1), dim=-1)
             zs_clip_recon_norm = nn.functional.normalize(zs_clip_recon.flatten(1), dim=-1)
             z_norm = nn.functional.normalize(z.flatten(1), dim=-1)
-            
+
             # sims_base += nn.functional.cosine_similarity(z_norm, zs_norm).mean().item()
 
             # forward and backward top 1 accuracy
             labels = torch.arange(len(z_norm)).to(device)
-            fwd_percent_correct += topk(batchwise_cosine_similarity(zs_norm, z_norm),
+            racc += topk(batchwise_cosine_similarity(zs_norm, z_norm),
                                               labels, k=1)
-            bwd_percent_correct += topk(batchwise_cosine_similarity(zs_clip_norm, z_norm),
-                                              labels, k=1)
-            
-            fwd_percent_correct_recon += topk(batchwise_cosine_similarity(zs_recon_norm, z_norm),
-                                              labels, k=1)
-            bwd_percent_correct_recon += topk(batchwise_cosine_similarity(zs_clip_recon_norm, z_norm),
+            racc_clip += topk(batchwise_cosine_similarity(zs_clip_norm, z_norm),
                                               labels, k=1)
             
-        del z, zs, z_norm, zs_norm
+            racc_recon += topk(batchwise_cosine_similarity(zs_recon_norm, z_norm),
+                                              labels, k=1)
+            racc_clip_recon += topk(batchwise_cosine_similarity(zs_clip_recon_norm, z_norm),
+                                              labels, k=1)
+            
+        # del z, zs, z_norm, zs_norm
             
         model.eval()
-        for val_i, (val_fmri, val_z, val_z_pool) in enumerate(val_dataloader):
+        for val_i, (val_fmri, val_z) in enumerate(val_dataloader):
             with torch.no_grad():
                 val_fmri = val_fmri.unsqueeze(1).float().to(device)
                 val_z = val_z.float().to(device)
                 
                 val_zs, val_zs_clip, val_zs_recon, val_zs_clip_recon, val_recon, val_rec_loss, val_kl_loss, val_clip_loss, val_cycle_loss, val_loss = model(val_fmri, val_z, sample_posterior=False)
-                # val_zs, val_recon, val_rec_loss, val_kl_loss, val_clip_loss, val_cycle_loss, val_loss = model(val_fmri, val_z, sample_posterior=False)
                 
                 val_loss = val_loss.mean()
                 check_loss(val_loss)
@@ -247,19 +200,19 @@ def main(args):
                 
                 # val_sims_base += nn.functional.cosine_similarity(val_z_norm, val_zs_norm).mean().item()
 
-                # forward and backward top 1 accuracy
+                # retrieval top-1 accuracy
                 labels = torch.arange(len(val_z_norm)).to(device)
-                val_fwd_percent_correct += topk(batchwise_cosine_similarity(val_zs_norm, val_z_norm),
+                val_racc += topk(batchwise_cosine_similarity(val_zs_norm, val_z_norm),
                                                 labels, k=1)
-                val_bwd_percent_correct += topk(batchwise_cosine_similarity(val_zs_clip_norm, val_z_norm),
+                val_racc_clip += topk(batchwise_cosine_similarity(val_zs_clip_norm, val_z_norm),
                                                 labels, k=1)
                 
-                val_fwd_percent_correct_recon += topk(batchwise_cosine_similarity(val_zs_recon_norm, val_z_norm),
+                val_racc_recon += topk(batchwise_cosine_similarity(val_zs_recon_norm, val_z_norm),
                                                 labels, k=1)
-                val_bwd_percent_correct_recon += topk(batchwise_cosine_similarity(val_zs_clip_recon_norm, val_z_norm),
+                val_racc_clip_recon += topk(batchwise_cosine_similarity(val_zs_clip_recon_norm, val_z_norm),
                                                 labels, k=1)
             
-        del val_z, val_zs, val_z_norm, val_zs_norm
+        # del val_z, val_zs, val_z_norm, val_zs_norm
         
         logs = {"train/loss": np.mean(losses[-(train_i + 1):]),
                 "val/loss": np.mean(val_losses[-(val_i + 1):]),
@@ -271,19 +224,17 @@ def main(args):
                 "val/clip_loss": np.mean(val_clip_losses[-(val_i + 1):]),
                 "train/cycle_loss": np.mean(cycle_losses[-(train_i + 1):]),
                 "val/cycle_loss": np.mean(val_cycle_losses[-(val_i + 1):]),
-                "train/lr": lrs[-1],
-                # "train/cosine_sim_base": sims_base / (train_i + 1),
-                # "val/cosine_sim_base": val_sims_base / (val_i + 1),
-                "train/fwd_acc": fwd_percent_correct / (train_i + 1),
-                "train/fwd_acc_clip": bwd_percent_correct / (train_i + 1),
-                "val/val_fwd_acc": val_fwd_percent_correct / (val_i + 1),
-                "val/val_fwd_acc_clip": val_bwd_percent_correct / (val_i + 1),
-                "train/fwd_acc_recon": fwd_percent_correct_recon / (train_i + 1),
-                "train/fwd_acc_clip_recon": bwd_percent_correct_recon / (train_i + 1),
-                "val/val_fwd_acc_recon": val_fwd_percent_correct_recon / (val_i + 1),
-                "val/val_fwd_acc_clip_recon": val_bwd_percent_correct_recon / (val_i + 1),
+                "train/racc": racc / (train_i + 1),
+                "train/racc_clip": racc_clip / (train_i + 1),
+                "val/val_racc": val_racc / (val_i + 1),
+                "val/val_racc_clip": val_racc_clip / (val_i + 1),
+                "train/racc_recon": racc_recon / (train_i + 1),
+                "train/racc_clip_recon": racc_clip_recon / (train_i + 1),
+                "val/val_racc_recon": val_racc_recon / (val_i + 1),
+                "val/val_racc_clip_recon": val_racc_clip_recon / (val_i + 1),
                 }
         
+
         progress_bar.set_postfix(**logs)
         
         if (epoch % args.ckpt_interval == 0) or (epoch + 1 == args.num_epochs):
@@ -333,8 +284,8 @@ if __name__ == "__main__":
     parser.add_argument("--hour", type=int, default=36)
     parser.add_argument("--subject", type=int, default=1)
     parser.add_argument("--ckpt_name", type=str, default=None)
-    parser.add_argument("--model_name", type=str, default="neurovae-nsd-s1-vs1-bs64-d1664-zscore-v10-cycle-proj")
-    # parser.add_argument("--model_name", type=str, default="try")
+    # parser.add_argument("--model_name", type=str, default="neurovae-nsd-s1-vs1-bs64-d1664-zscore-v10-cycle-proj")
+    parser.add_argument("--model_name", type=str, default="try")
     parser.add_argument("--hidden_dim", type=int, default=1664)
     parser.add_argument("--linear_dim", type=int, default=1024)
     parser.add_argument("--embed_dim", type=int, default=1664)
