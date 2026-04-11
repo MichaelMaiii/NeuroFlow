@@ -12,14 +12,15 @@
   Toward Unified Visual Encoding and Decoding from Neural Activity <br>
 
 
-
-
 <br><img src='Neuroflow.png' align="center"><br>
 
-### Requirements
+## Update NeuroFlow++
+Add **Retrieval Submodule (8M)** and **Low-level Submodule(15M)** to improve Pixel-Level and Raw-Retrieval performance of NeuroFlow.
+
+## Requirements
 * Create conda environment using environment.yaml in the main directory by entering `conda env create -f requirements.yml` . It is an extensive environment and may include redundant libraries. You may also create environment by checking requirements yourself. 
 
-### Data Acquisition and Processing
+## Data Acquisition and Processing
 
 ps. You need to set your own path to run the code.
 
@@ -32,15 +33,20 @@ ps. You need to set your own path to run the code.
     python data/download_nsddata.py
     python data/prepare_nsddata_zscore.py -sub x
     ```
-4. Extract CLIP image embedding by running `extract_features_sdxl_unclip.ipynb`
+4. Extract CLIP image embedding by running `data/extract_features_sdxl_unclip.ipynb`
 
 #### Option 2
 
-Download data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main);
+Download preprocessed data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main)
 
 
+## Model
 
-### Stage1-BrainVAE: 
+Download model weight from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main)
+
+Download final results from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main) for quick evaluation.
+
+### Stage1 - BrainVAE Training: 
   ```
   bash script/vae/run_neurovae.sh
   ```
@@ -50,7 +56,7 @@ Download data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/N
 <!-- ps. Change sys.path/save_path/data_path to run the code correctly. -->
 
 
-### Stage2-XFM:
+### Stage2 - XFM Training:
   ```
   bash script/xfm/run_xfm.sh
   ```

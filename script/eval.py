@@ -269,7 +269,6 @@ def print_results(results):
     """
     print(f"{'PixCorr:':<20} {results['PixCorr']:>10.4f}")
     print(f"{'SSIM:':<20} {results['SSIM']:>10.4f}")
-    # 百分比格式输出（×100 + 保留2位小数 + 追加%符号）
     print(f"{'Incep:':<20} {results['Incep_avgpool'] * 100:>10.2f}% (2-way percent correct)")
     print(f"{'CLIP:':<20} {results['CLIP_None'] * 100:>10.2f}% (2-way percent correct)")
     print(f"{'Eff:':<20} {results['Eff_avgpool']:>10.4f}")
@@ -327,7 +326,6 @@ args = get_args()
 
 def main():
     sub = 1
-    args.gt_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/BrainSyn/evals"
     args.eval_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow/evals"
 
     args.model_name = f"fm-s{sub}-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/sub{sub}"
@@ -335,27 +333,30 @@ def main():
     
     print(args)
 
+    ## change path
     all_images = torch.load("/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/nsd/subj01/all_images.pt")
+    all_clip_voxels = torch.load("/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/BrainSyn/evals/all_clipvoxels.pt")
+
     all_recon_img = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_img.pt")
+    all_recon_blurry = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_blurry.pt")
     all_recon_f2i = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_f2i.pt")
     all_recon_fmri = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_fmri.pt")
     
-    all_image_voxels = torch.load(f"{args.gt_path}/all_clipvoxels.pt")
     all_zfmri_raw = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_raw.pt")
     all_zfmri_recon = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_syn.pt")
     
-    all_recon_blurry = torch.load(f"{args.eval_path}/fm-s{sub}-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse/sub{sub}/single_s{sub}_all_recon_blurry.pt")
-
+    #! optional: add blurry image to improve pixel-level performance
     all_recon_merge = all_recon_img * 0.65 + all_recon_blurry * 0.35
     
-    data_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/" 
-    all_fmri = np.load(os.path.join(data_path, f'nsd/subj0{sub}/nsd_train_fmri_scale_sub{sub}.npy')).astype(np.float32)
-    all_fmri = all_fmri.mean(axis=1)
-    print(np.mean(all_fmri), np.std(all_fmri))
-    all_fmri = torch.tensor(all_fmri, dtype=torch.float32).squeeze(1)
-
-    voxel_mean = all_fmri.mean(dim=0)   # [D]
-    voxel_std  = all_fmri.std(dim=0)    # [D]
+    #! optional: denormalize z-score data and calculate voxel-level metrics with test scale data -> fair comparisons with SynBrain
+    ## Download test scale data at https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main/evals/voxel-level
+    data_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/"
+    stats_path = os.path.join(
+        data_path, f"nsd/subj0{sub}/nsd_train_fmri_voxel_stats_sub{sub}.pt"
+    )
+    stats = torch.load(stats_path)
+    voxel_mean = stats["voxel_mean"]
+    voxel_std = stats["voxel_std"]
     all_recon_scale = all_recon_fmri.squeeze(1) * voxel_std + voxel_mean
     
     all_test_fmri = np.load(os.path.join(data_path, f'nsd/subj0{sub}/nsd_test_fmri_scale_sub{sub}.npy')).astype(np.float32)
@@ -363,15 +364,16 @@ def main():
     all_test_fmri = torch.tensor(all_test_fmri, dtype=torch.float32).squeeze(1)
     
     metrics = evaluate_voxel_metrics(all_recon_scale, all_test_fmri)
+    ###########################################################################
     
     results_dec = compute(all_images, all_recon_merge)
     results_enc = compute(all_images, all_recon_f2i)
     
     results = {}
-    fwd_percent_correct, _ = calculate_retrival_percent_correct(all_image_voxels, all_zfmri_raw)
+    fwd_percent_correct, _ = calculate_retrival_percent_correct(all_clip_voxels, all_zfmri_raw)
     results['fwd_percent_correct'] = fwd_percent_correct
     
-    fwd_percent_correct_recon, _ = calculate_retrival_percent_correct(all_image_voxels, all_zfmri_recon)
+    fwd_percent_correct_recon, _ = calculate_retrival_percent_correct(all_clip_voxels, all_zfmri_recon)
     results['fwd_percent_correct_recon'] = fwd_percent_correct_recon
     
     print("************************* Decoding *********************************")
