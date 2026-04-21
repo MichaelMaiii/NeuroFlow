@@ -14,6 +14,12 @@
 
 <br><img src='Neuroflow.png' align="center"><br>
 
+### News
+* Release [ArXiv paper](https://arxiv.org/abs/2604.09817).
+* Release checkpoint and data.
+* NeuroFlow has been accepted by CVPR 2026!!!
+* **NeuroFlow** unifies visual encoding and decoding from neural activity with semantic consistency within a cross-modal flow model.
+
 ## Update NeuroFlow++
 Add **Retrieval Submodule (8M)** and **Low-level Submodule(15M)** to improve Pixel-Level and Raw-Retrieval performance of NeuroFlow.
 
