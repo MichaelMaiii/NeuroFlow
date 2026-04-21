@@ -16,7 +16,7 @@
 
 ### News
 * Release [ArXiv paper](https://arxiv.org/abs/2604.09817).
-* Release checkpoint and data.
+* Release checkpoint and data [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main).
 * NeuroFlow has been accepted by CVPR 2026!!!
 * **NeuroFlow** unifies visual encoding and decoding from neural activity with semantic consistency within a cross-modal flow model.
 
@@ -43,12 +43,12 @@ ps. You need to set your own path to run the code.
 
 #### Option 2
 
-Download preprocessed data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main)
+Download preprocessed data from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main).
 
 
 ## Model
 
-Download model weight from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main)
+Download model checkpoint from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main).
 
 Download final results from [HuggingFace NeuroFlow](https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main) for quick evaluation.
 
