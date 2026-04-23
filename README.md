@@ -85,11 +85,11 @@ Run `src/s2n/run_sit_os_ft.sh` for subject-adaptive S2N mapper training. -->
 
 
 ### Citation
-<!-- ```
-@article{mai2025synbrain,
-  title={SynBrain: Enhancing Visual-to-fMRI Synthesis via Probabilistic Representation Learning},
-  author={Mai, Weijian and Wu, Jiamin and Zhu, Yu and Yao, Zhouheng and Zhou, Dongzhan and Luo, Andrew F and Zheng, Qihao and Ouyang, Wanli and Song, Chunfeng},
-  journal={arXiv preprint arXiv:2508.10298},
-  year={2025}
+```
+@article{mai2026neuroflow,
+  title={NeuroFlow: Toward Unified Visual Encoding and Decoding from Neural Activity},
+  author={Mai, Weijian and Nan, Mu and Zhu, Yu and Cao, Jiahang and Zhang, Rui and Dai, Yuqin and Song, Chunfeng and Luo, Andrew F and Wu, Jiamin},
+  journal={arXiv preprint arXiv:2604.09817},
+  year={2026}
 }
-``` -->
+```
